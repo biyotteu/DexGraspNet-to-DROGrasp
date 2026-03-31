@@ -114,7 +114,7 @@ wget <meshdata 다운로드 URL>
 wget <dataset 다운로드 URL>
 ```
 
-다운로드 후 압축 해제:
+다운로드 후 압축 해제
 
 ```bash
 # 파일명은 실제 다운로드에 맞게 조정하세요
@@ -122,7 +122,7 @@ tar -xzf meshdata.tar.gz    # 또는 unzip meshdata.zip
 tar -xzf dataset.tar.gz     # 또는 unzip dataset.zip
 ```
 
-DexGraspNet 레포의 `data/`에 심볼릭 링크로 연결합니다:
+DexGraspNet 레포의 `data/`에 심볼릭 링크로 연결
 
 ```bash
 cd ~/project/DexGraspNet/data
@@ -136,7 +136,7 @@ ln -sfn ~/downloads/dataset  ./dataset
 ln -sfn ~/downloads/meshdata ./meshdata
 ```
 
-완료 후 확인:
+완료 후 확인
 
 ```bash
 # 오브젝트 수 확인 (5355개여야 함)
@@ -152,7 +152,7 @@ diff /tmp/dataset_objects.txt /tmp/mesh_objects.txt
 # diff 출력이 없으면 완벽히 매칭
 ```
 
-이 시점의 전체 구조:
+이 시점의 전체 구조
 
 ```
 ~/project/
@@ -686,45 +686,204 @@ python inference_dexgraspnet.py \
     --output_dir ./inference_results
 ```
 
-### Inference 출력 형식
+### Inference 결과물 상세
 
-각 오브젝트에 대해 `.pt`와 `.json` 두 파일이 생성됩니다.
+#### 디렉토리 구조
 
-**`.pt` 파일 (PyTorch tensor):**
+```
+inference_results/
+├── core-bottle-1071fa4cddb2da2fc8724d5673a063a6_s0060.pt     ← 오브젝트별 결과
+├── core-mug-8570d9a8_s0080.pt
+├── sem-Bottle-437678d4ea_s0060.pt
+├── ...  (오브젝트 수만큼)
+└── batch_stats.json                                           ← 전체 배치 통계
+```
+
+파일명 규칙: `{오브젝트코드}_s{스케일}.pt`
+예: `core-bottle-xxx_s0060` → 오브젝트 `core-bottle-xxx`, 스케일 `0.060`
+
+#### `.pt` 파일 구조
+
 ```python
-data = torch.load('object_name.pt')
-data['predict_q']   # (num_grasps, 30) - 예측된 grasp pose
-data['dro']         # (num_grasps, N, N) - D(R,O) distance matrix
-data['mlat_pc']     # (num_grasps, N, 3) - multilateration 결과
+import torch
+
+data = torch.load('core-bottle-xxx_s0060.pt')
+
+data['predict_q']   # (num_grasps, 30) — 핵심 결과: 예측된 grasp pose들
+# --save_full 옵션 사용 시 추가 저장:
+data['dro']         # (num_grasps, 1024, 1024) — D(R,O) distance matrix
+data['mlat_pc']     # (num_grasps, 1024, 3) — multilateration 복원 포인트
 ```
 
-**`predict_q` 구조 (30 DOF ShadowHand):**
+#### `predict_q` 텐서 상세 (핵심)
+
+`predict_q`는 `(num_grasps, 30)` shape의 PyTorch float32 tensor입니다.
+각 행(row)이 하나의 grasp pose이며, 30개 값은 아래와 같이 구성됩니다.
+
 ```
-predict_q[i] = [tx, ty, tz, rx, ry, rz, j0, j1, ..., j23]
-                ─────────  ───────────  ─────────────────
-                translation  rotation     24 hand joints
-                 (meters)  (XYZ intrinsic
-                            Euler, rad)
+predict_q[i] = [tx, ty, tz, rx, ry, rz, WRJ2, WRJ1, FFJ3, FFJ2, FFJ1, FFJ0, MFJ3, MFJ2, MFJ1, MFJ0, RFJ3, RFJ2, RFJ1, RFJ0, LFJ4, LFJ3, LFJ2, LFJ1, LFJ0, THJ4, THJ3, THJ2, THJ1, THJ0]
 ```
 
-- `[0:3]`: Wrist translation (tx, ty, tz) in meters
-- `[3:6]`: Wrist rotation (rx, ry, rz) in XYZ intrinsic Euler angles (radians)
-- `[6:8]`: Wrist joints (WRJ2, WRJ1)
-- `[8:12]`: Forefinger (FFJ3, FFJ2, FFJ1, FFJ0)
-- `[12:16]`: Middle finger (MFJ3, MFJ2, MFJ1, MFJ0)
-- `[16:20]`: Ring finger (RFJ3, RFJ2, RFJ1, RFJ0)
-- `[20:25]`: Little finger (LFJ4, LFJ3, LFJ2, LFJ1, LFJ0)
-- `[25:30]`: Thumb (THJ4, THJ3, THJ2, THJ1, THJ0)
+인덱스별 상세:
 
-**`.json` 파일 (사람이 읽을 수 있는 형태):**
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Index │ Name   │ 설명                          │ 단위   │ 범위 (일반적) │
+├───────┼────────┼───────────────────────────────┼────────┼──────────────┤
+│   0   │ tx     │ 손목 X 위치 (오른쪽+)          │ meter  │ -0.3 ~ 0.3  │
+│   1   │ ty     │ 손목 Y 위치 (앞쪽+)            │ meter  │ -0.3 ~ 0.3  │
+│   2   │ tz     │ 손목 Z 위치 (위쪽+)            │ meter  │ -0.3 ~ 0.3  │
+├───────┼────────┼───────────────────────────────┼────────┼──────────────┤
+│   3   │ rx     │ 손목 회전 X (Roll)             │ radian │ -π ~ π      │
+│   4   │ ry     │ 손목 회전 Y (Pitch)            │ radian │ -π ~ π      │
+│   5   │ rz     │ 손목 회전 Z (Yaw)              │ radian │ -π ~ π      │
+├───────┼────────┼───────────────────────────────┼────────┼──────────────┤
+│   6   │ WRJ2   │ 손목 좌우 기울기 (Wrist Deviate)│ radian │ -0.52 ~ 0.17│
+│   7   │ WRJ1   │ 손목 굽힘 (Wrist Flexion)      │ radian │ -0.69 ~ 0.49│
+├───────┼────────┼───────────────────────────────┼────────┼──────────────┤
+│   8   │ FFJ3   │ 검지 벌림 (Abduction)          │ radian │ -0.35 ~ 0.35│
+│   9   │ FFJ2   │ 검지 첫째마디 굽힘 (Proximal)   │ radian │  0.0 ~ 1.57 │
+│  10   │ FFJ1   │ 검지 둘째마디 굽힘 (Middle)     │ radian │  0.0 ~ 1.57 │
+│  11   │ FFJ0   │ 검지 끝마디 굽힘 (Distal)      │ radian │  0.0 ~ 1.57 │
+├───────┼────────┼───────────────────────────────┼────────┼──────────────┤
+│  12   │ MFJ3   │ 중지 벌림                      │ radian │ -0.35 ~ 0.35│
+│  13   │ MFJ2   │ 중지 첫째마디 굽힘              │ radian │  0.0 ~ 1.57 │
+│  14   │ MFJ1   │ 중지 둘째마디 굽힘              │ radian │  0.0 ~ 1.57 │
+│  15   │ MFJ0   │ 중지 끝마디 굽힘                │ radian │  0.0 ~ 1.57 │
+├───────┼────────┼───────────────────────────────┼────────┼──────────────┤
+│  16   │ RFJ3   │ 약지 벌림                      │ radian │ -0.35 ~ 0.35│
+│  17   │ RFJ2   │ 약지 첫째마디 굽힘              │ radian │  0.0 ~ 1.57 │
+│  18   │ RFJ1   │ 약지 둘째마디 굽힘              │ radian │  0.0 ~ 1.57 │
+│  19   │ RFJ0   │ 약지 끝마디 굽힘                │ radian │  0.0 ~ 1.57 │
+├───────┼────────┼───────────────────────────────┼────────┼──────────────┤
+│  20   │ LFJ4   │ 새끼 회전 (Little Finger Rot)  │ radian │  0.0 ~ 0.79 │
+│  21   │ LFJ3   │ 새끼 벌림                      │ radian │ -0.35 ~ 0.35│
+│  22   │ LFJ2   │ 새끼 첫째마디 굽힘              │ radian │  0.0 ~ 1.57 │
+│  23   │ LFJ1   │ 새끼 둘째마디 굽힘              │ radian │  0.0 ~ 1.57 │
+│  24   │ LFJ0   │ 새끼 끝마디 굽힘                │ radian │  0.0 ~ 1.57 │
+├───────┼────────┼───────────────────────────────┼────────┼──────────────┤
+│  25   │ THJ4   │ 엄지 벌림 (Thumb Abduction)    │ radian │ -1.05 ~ 1.05│
+│  26   │ THJ3   │ 엄지 윗회전 (Upper Rotation)   │ radian │  0.0 ~ 1.22 │
+│  27   │ THJ2   │ 엄지 중간굽힘 (Middle Flexion) │ radian │ -0.21 ~ 0.52│
+│  28   │ THJ1   │ 엄지 첫째마디 굽힘              │ radian │ -0.70 ~ 0.70│
+│  29   │ THJ0   │ 엄지 끝마디 굽힘                │ radian │ -1.05 ~ 1.05│
+└───────┴────────┴───────────────────────────────┴────────┴──────────────┘
+```
+
+#### 좌표계 및 회전 컨벤션
+
+**좌표계**: 오브젝트 중심 기준. 오브젝트의 원점(0,0,0)을 기준으로 손목의 위치(tx,ty,tz)가 결정됩니다.
+
+**회전 컨벤션**: `rx, ry, rz`는 **scipy intrinsic XYZ** Euler angles입니다.
+
+```python
+from scipy.spatial.transform import Rotation
+
+# predict_q에서 rotation matrix 복원
+rx, ry, rz = predict_q[i, 3], predict_q[i, 4], predict_q[i, 5]
+rot_matrix = Rotation.from_euler('XYZ', [rx, ry, rz]).as_matrix()  # (3,3)
+
+# quaternion으로 변환 (시뮬레이터에서 필요할 수 있음)
+quat = Rotation.from_euler('XYZ', [rx, ry, rz]).as_quat()  # [qx, qy, qz, qw]
+```
+
+주의: DexGraspNet의 **extrinsic xyz** (= `transforms3d.euler.euler2mat` 기본값)와는 다른 컨벤션입니다. 동일한 rotation matrix를 표현하는 Euler angle 값이 달라집니다.
+
+```
+DexGraspNet:  Rotation.from_euler('xyz', [rx, ry, rz])  ← 소문자 (extrinsic)
+DRO-Grasp:   Rotation.from_euler('XYZ', [rx, ry, rz])  ← 대문자 (intrinsic)
+```
+
+#### ShadowHand 손가락 구조 다이어그램
+
+```
+                     ShadowHand (24 hand joints)
+                     ===========================
+
+          검지(FF)      중지(MF)      약지(RF)      새끼(LF)        엄지(TH)
+         ┌──────┐     ┌──────┐     ┌──────┐     ┌──────┐       ┌──────┐
+         │ FFJ0 │     │ MFJ0 │     │ RFJ0 │     │ LFJ0 │       │ THJ0 │
+         │(끝)  │     │(끝)  │     │(끝)  │     │(끝)  │       │(끝)  │
+         ├──────┤     ├──────┤     ├──────┤     ├──────┤       ├──────┤
+         │ FFJ1 │     │ MFJ1 │     │ RFJ1 │     │ LFJ1 │       │ THJ1 │
+         │(중간)│     │(중간)│     │(중간)│     │(중간)│       │(중간)│
+         ├──────┤     ├──────┤     ├──────┤     ├──────┤       ├──────┤
+         │ FFJ2 │     │ MFJ2 │     │ RFJ2 │     │ LFJ2 │       │ THJ2 │
+         │(근위)│     │(근위)│     │(근위)│     │(근위)│       │(중간)│
+         ├──────┤     ├──────┤     ├──────┤     ├──────┤       ├──────┤
+         │ FFJ3 │     │ MFJ3 │     │ RFJ3 │     │ LFJ3 │       │ THJ3 │
+         │(벌림)│     │(벌림)│     │(벌림)│     │(벌림)│       │(윗회전)│
+         └──┬───┘     └──┬───┘     └──┬───┘     ├──────┤       ├──────┤
+            │            │            │         │ LFJ4 │       │ THJ4 │
+            │            │            │         │(회전)│       │(벌림)│
+            │            │            │         └──┬───┘       └──┬───┘
+            └────────────┴────────────┴────────────┴──────────────┘
+                                      │
+                              ┌───────┴───────┐
+                              │  WRJ2 (좌우)  │
+                              │  WRJ1 (굽힘)  │
+                              ├───────────────┤
+                              │  손목 (Wrist)  │
+                              │  tx, ty, tz   │
+                              │  rx, ry, rz   │
+                              └───────────────┘
+```
+
+Joint 이름 규칙:
+- **FF** = Forefinger (검지), **MF** = Middle Finger (중지), **RF** = Ring Finger (약지)
+- **LF** = Little Finger (새끼), **TH** = Thumb (엄지)
+- **J0** = Distal (끝마디), **J1** = Middle (중간마디), **J2** = Proximal (첫째마디), **J3** = Abduction (벌림)
+- **J4** = 새끼/엄지에만 있는 추가 자유도 (회전/벌림)
+- **WRJ1** = Wrist Flexion (손목 굽힘), **WRJ2** = Wrist Deviation (손목 좌우)
+
+#### 결과 해석 예시
+
+```python
+import torch
+
+data = torch.load('inference_results/core-bottle-xxx_s0060.pt')
+predict_q = data['predict_q']  # (100, 30) — 100개 다양한 grasp
+
+# 첫 번째 grasp 해석
+q = predict_q[0]
+print(f"손목 위치: x={q[0]:.4f}m, y={q[1]:.4f}m, z={q[2]:.4f}m")
+print(f"손목 회전: rx={q[3]:.4f}, ry={q[4]:.4f}, rz={q[5]:.4f} (rad)")
+print(f"손목 관절: WRJ2={q[6]:.4f}, WRJ1={q[7]:.4f}")
+print(f"검지: FFJ3={q[8]:.4f} FFJ2={q[9]:.4f} FFJ1={q[10]:.4f} FFJ0={q[11]:.4f}")
+print(f"엄지: THJ4={q[25]:.4f} THJ3={q[26]:.4f} THJ2={q[27]:.4f} THJ1={q[28]:.4f} THJ0={q[29]:.4f}")
+
+# 100개 grasp의 다양성 확인
+std = predict_q.std(dim=0)
+print(f"\nGrasp diversity (mean joint std): {std[6:].mean():.4f}")
+print(f"Translation diversity: tx={std[0]:.4f} ty={std[1]:.4f} tz={std[2]:.4f}")
+
+# Rotation matrix로 변환
+from scipy.spatial.transform import Rotation
+for i in range(3):
+    euler = predict_q[i, 3:6].numpy()
+    R = Rotation.from_euler('XYZ', euler).as_matrix()
+    print(f"\nGrasp {i} rotation matrix:\n{R}")
+```
+
+#### `batch_stats.json` 구조
+
+배치 처리 완료 후 생성되는 전체 통계 파일:
+
 ```json
-{
-  "predict_q": [[0.012, -0.05, 0.03, 1.2, 0.5, -0.8, ...]],
-  "time_network": 0.152,
-  "time_optimization": 2.341,
-  "num_grasps": 10,
-  "dof": 30
-}
+[
+  {
+    "object": "core-bottle-1071fa4cddb2da2fc8724d5673a063a6_s0060",
+    "num_grasps": 100,
+    "time_network": 1.234,
+    "time_optimization": 45.678
+  },
+  {
+    "object": "core-mug-8570d9a8_s0080",
+    "num_grasps": 100,
+    "time_network": 1.198,
+    "time_optimization": 44.321
+  }
+]
 ```
 
 ### Inference Pipeline 상세
